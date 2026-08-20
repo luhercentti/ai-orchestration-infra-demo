@@ -20,6 +20,8 @@ optimization) are documented in [OTHER_EXAMPLES.md](OTHER_EXAMPLES.md) for later
 
 **Step-by-step local and production deployment instructions are in [RUNBOOK.md](RUNBOOK.md).**
 
+**Full end-to-end request flow (who does what, when, and how local differs from prod) is in [FLOW.md](FLOW.md).**
+
 ## How the multi-agent orchestration actually works
 
 This is the core mechanic of the demo, explained step by step:

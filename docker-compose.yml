@@ -44,5 +44,18 @@ services:
       redis:
         condition: service_healthy
 
+  portal:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./portal:/app
+    command: sh -c "npm install --silent && npm run dev"
+    environment:
+      ORCHESTRATOR_URL: http://orchestrator:8000
+    ports:
+      - "3001:3001"
+    depends_on:
+      - orchestrator
+
 volumes:
   postgres_data:

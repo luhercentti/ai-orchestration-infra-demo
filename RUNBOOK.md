@@ -3,7 +3,8 @@
 This file is the operational companion to the root README. It covers:
 1. What each folder does and how data flows through the system at runtime
 2. Running the demo locally on a laptop (no cloud account needed)
-3. Deploying to production on AWS (EKS + RDS + ElastiCache)
+3. Visualising the graph with LangGraph Studio
+4. Deploying to production on AWS (EKS + RDS + ElastiCache)
 
 ---
 
@@ -73,8 +74,9 @@ checkpoint by any pod — no data is lost.
 
 ### Prerequisites
 
-- Docker Desktop (or Docker Engine + Compose plugin) — to run Postgres + Redis
+- Docker Desktop (or Docker Engine + Compose plugin) — to run Postgres + Redis + Portal
 - Python 3.12 (for running tests without Docker)
+- Node.js 20+ (portal runs inside Docker via Compose, but needed if running it directly)
 - `make` (pre-installed on macOS/Linux)
 
 ### 2a. Start the full stack
@@ -88,23 +90,64 @@ cp .env.example .env
 # Optionally fill in OPENAI_API_KEY and LANGFUSE_* if you want them.
 
 make dev
-# Starts: postgres:16 + redis:7 + orchestrator (built from orchestrator/Dockerfile)
-# Orchestrator is available at http://localhost:8000
-# Swagger UI: http://localhost:8000/docs
+# Starts: postgres:16 + redis:7 + orchestrator + portal (Next.js)
+# Orchestrator API:  http://localhost:8000
+# Swagger UI:        http://localhost:8000/docs  ← interactive API browser (see note below)
+# Portal (web GUI):  http://localhost:3001       ← submit requests + approval queue
 ```
 
-### 2b. Exercise the full agent flow
+> **Swagger UI** (`/docs`) is FastAPI's auto-generated interactive API browser. It
+> lists all five endpoints (`POST /requests`, `GET /requests`, `GET /requests/{id}`,
+> `POST /requests/{id}/approve`, `GET /health`), lets you fill in a form for each
+> one, click Execute, and see the full JSON response — exactly like `curl` but in
+> a browser tab with no typing. Useful for quickly exploring the API or debugging
+> without copy-pasting `curl` commands.
 
-Open a second terminal. Replace `<thread_id>` with the value from each response.
+### 2b. Use the portal (recommended for demos)
+
+Open **http://localhost:3001** in a browser:
+
+- **New Request** page (`/`) — fill in the plain-language request and your name,
+  click Submit. The graph runs all agents automatically and the page shows the
+  parsed spec, Terraform module, and estimated cost once the run pauses.
+- **Approval Queue** (`/approvals`) — lists all submitted requests with their
+  status. Pending-approval runs show Approve / Reject buttons. Click Approve and
+  the graph resumes; the status updates to `provisioned`.
+
+### 2c. Exercise the full agent flow via curl
 
 ```bash
 # Step 1 — submit an infra request (this starts the graph run)
+#
+# What happens internally when you run this:
+#   1. FastAPI receives the request and creates a new graph run (thread_id = UUID)
+#   2. supervisor → spec_agent (parses "postgres / billing / staging" from the text)
+#   3. supervisor → policy_agent (checks quota and golden-path rules → approved)
+#   4. supervisor → plan_agent (selects modules/rds-postgres, estimates $60/mo)
+#   5. supervisor → human_approval — graph hits interrupt(), freezes here,
+#      persists full state to Postgres, and returns the response to you
+#
+# The API call returns immediately once the run is frozen. It does NOT wait for
+# a human to approve — that is a separate call (Step 3 below).
+#
+# Copy the "thread_id" from the response — you need it for Steps 2 and 3.
 curl -s -X POST localhost:8000/requests \
   -H 'content-type: application/json' \
   -d '{"raw_text": "I need a postgres database for team billing, staging", "requester": "alice"}' \
   | python3 -m json.tool
-# The run pauses at human_approval. Response includes "interrupts" with the
-# approval payload and the "thread_id" you'll use in the next steps.
+
+# Example response shape:
+# {
+#   "thread_id": "3f2a1c...",          ← copy this
+#   "values": {
+#     "spec":   { "resource_type": "postgres", "team": "billing", "environment": "staging" },
+#     "policy": { "approved": true, "violations": [] },
+#     "plan":   { "module": "modules/rds-postgres", "estimated_monthly_cost_usd": 60 }
+#   },
+#   "next_nodes": ["supervisor"],
+#   "interrupts": [{ "value": { "message": "Approve provisioning?", ... } }]
+#                                      ↑ this confirms the run is paused and waiting
+# }
 
 # Step 2 — inspect the current state (frozen at the approval gate)
 curl -s localhost:8000/requests/<thread_id> | python3 -m json.tool
@@ -150,7 +193,43 @@ make down
 
 ---
 
-## 3. Production deployment on AWS (EKS)
+## 3. Visualise the graph with LangGraph Studio
+
+LangGraph Studio is a free macOS desktop app that connects to a running LangGraph
+server and shows the graph visually — nodes, edges, live state at each hop, which
+node is executing, and a full history of past runs you can replay step by step.
+
+### Install
+
+Download from: **https://studio.langchain.com** (macOS only; free)
+
+### Run
+
+`make dev` must already be running (the orchestrator needs to be up). Then:
+
+```bash
+# In the repo root — langgraph.json points Studio at the graph
+langgraph dev
+# or open LangGraph Studio and point it at the repo folder
+```
+
+Studio reads `langgraph.json` (already in the repo root) which tells it:
+- Where the graph file is (`orchestrator/app/graph.py:build_graph`)
+- Which `.env` file to use
+
+Once connected you can:
+- See the full graph diagram (nodes + edges)
+- Submit a test input and watch each node light up as it executes
+- Inspect the shared state after each hop (spec, policy result, plan, etc.)
+- See the `interrupt()` pause at `human_approval` and resume it from the UI
+- Replay any past run from any checkpoint
+
+> Studio is the best way to **demo the graph visually** to an audience — it makes
+> the supervisor routing and state flow visible in real time without any code.
+
+---
+
+## 4. Production deployment on AWS (EKS)
 
 ### Prerequisites
 
@@ -301,7 +380,7 @@ terraform destroy -var="environment=staging"
 
 ---
 
-## 4. Observability (both local and prod)
+## 5. Observability (both local and prod)
 
 ### Langfuse (optional tracing)
 
@@ -334,11 +413,14 @@ See `observability/slo.yaml` for the full contract. Key numbers to alert on:
 
 ---
 
-## 5. Quick-reference cheat sheet
+## 6. Quick-reference cheat sheet
 
 | Goal | Command |
 |---|---|
-| Start local stack | `make dev` |
+| Start local stack (API + portal) | `make dev` |
+| Open web portal | http://localhost:3001 |
+| Open Swagger API browser | http://localhost:8000/docs |
+| Visualise graph (LangGraph Studio) | `langgraph dev` (Studio app must be installed) |
 | Run tests | `make test` |
 | Stop local stack | `make down` |
 | Add a new agent node | `make new-agent NAME=<name>` |

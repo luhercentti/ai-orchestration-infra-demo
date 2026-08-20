@@ -1,0 +1,7 @@
+{
+  "dependencies": ["./orchestrator"],
+  "graphs": {
+    "infra_request_copilot": "./orchestrator/app/graph.py:build_graph"
+  },
+  "env": ".env"
+}
