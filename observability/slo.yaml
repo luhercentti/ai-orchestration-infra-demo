@@ -1,0 +1,29 @@
+# Reliability contract for the orchestrator service.
+# These are the numbers dashboards/alerts should be built against — a product
+# commitment, not just "we have logs".
+
+slos:
+  - name: routing_latency
+    description: "Time for the supervisor node to produce a routing decision"
+    target: "p95 < 2s"
+    measured_by: "langfuse trace span: node=supervisor"
+
+  - name: checkpoint_durability
+    description: "No run loses state on pod restart/rollout"
+    target: "0 checkpoint write failures"
+    measured_by: "orchestrator logs: checkpoint_write_error count"
+
+  - name: approval_turnaround
+    description: "Time between a run pausing at human_approval and being resumed"
+    target: "p95 < 4h (business hours)"
+    measured_by: "difference between interrupt timestamp and resume timestamp per thread_id"
+
+  - name: provisioning_success_rate
+    description: "Approved requests that provision successfully on first attempt"
+    target: ">= 99%"
+    measured_by: "provisioning_agent status=provisioned / status=approved count"
+
+  - name: end_to_end_run_error_rate
+    description: "Runs that error before reaching a terminal state (end/provisioned/rejected)"
+    target: "< 1%"
+    measured_by: "langfuse trace error rate, filtered by run type"

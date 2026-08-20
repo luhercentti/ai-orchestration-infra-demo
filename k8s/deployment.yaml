@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: ai-orchestration-demo
+  labels:
+    app: orchestrator
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      # Give a run time to reach its next checkpoint before the pod is killed
+      # during a rollout/scale-down — an in-flight LangGraph run is durable via
+      # Postgres, but this avoids unnecessary mid-node interruption.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: orchestrator
+          image: ai-orchestration-demo/orchestrator:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: orchestrator-secrets
+          env:
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              exec:
+                # Give the app a moment to stop accepting new runs and let the
+                # in-flight one reach its next checkpoint before SIGTERM.
+                command: ["sh", "-c", "sleep 10"]

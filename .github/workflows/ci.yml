@@ -1,0 +1,21 @@
+name: Tests
+
+on:
+  workflow_dispatch:  # manual trigger only — run from the GitHub Actions tab
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r orchestrator/requirements.txt -r tests/requirements.txt
+
+      - name: Run tests
+        working-directory: orchestrator
+        run: PYTHONPATH=. python -m pytest ../tests -v
