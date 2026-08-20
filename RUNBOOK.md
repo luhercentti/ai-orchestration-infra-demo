@@ -18,6 +18,7 @@ orchestrator/          ← FastAPI + LangGraph graph (the brains)
   app/main.py          ← receives POST /requests, starts a graph run
   app/graph.py         ← defines nodes, edges, conditional routing
   app/agents/
+    guardrails.py      ← FIRST node: blocks destructive intent + prompt injection
     supervisor.py      ← routing: decides which node runs next
     spec_agent.py      ← parses free-text into a structured spec
     policy_agent.py    ← checks golden-path rules, quota, naming
@@ -54,7 +55,8 @@ tests/    ← pytest (no Postgres needed; uses in-memory checkpointer)
 ### Runtime flow for a single request
 
 ```
-POST /requests  →  supervisor  →  spec_agent  →  supervisor
+POST /requests  →  guardrails  →  (blocked?) END  immediately
+                               →  (passed?)  supervisor  →  spec_agent  →  supervisor
                 →  policy_agent  →  supervisor
                 →  plan_agent   →  supervisor
                 →  human_approval  (INTERRUPT — run frozen in Postgres)
@@ -86,8 +88,8 @@ git clone <repo-url>
 cd ai-orchestration-demo
 
 cp .env.example .env
-# .env is already usable with empty API keys — agents run in heuristic mode.
-# Optionally fill in OPENAI_API_KEY and LANGFUSE_* if you want them.
+# Edit .env and choose your LLM option (see section 2b below).
+# If you leave OPENAI_API_KEY empty the demo still works — see LLM options.
 
 make dev
 # Starts: postgres:16 + redis:7 + orchestrator + portal (Next.js)
@@ -103,7 +105,52 @@ make dev
 > a browser tab with no typing. Useful for quickly exploring the API or debugging
 > without copy-pasting `curl` commands.
 
-### 2b. Use the portal (recommended for demos)
+### 2b. Choose your LLM option (edit `.env` before starting)
+
+The orchestrator works in three modes. Pick the one that fits your situation and
+set it in `.env` before running `make dev`. Restart with `make down && make dev`
+after any change.
+
+**Option 1 — No LLM (default, works offline, no cost)**
+```bash
+OPENAI_API_KEY=      # leave empty
+```
+Agents use keyword heuristics. Works for obvious requests ("postgres for team X,
+staging") but will return `resource_type: unknown` for vague or creative phrasing.
+Good for: first run, no API key yet, air-gapped environments.
+
+**Option 2 — OpenAI (real intelligence, ~$0.001/request)**
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+```
+The spec agent actually understands intent — "somewhere to cache session tokens"
+→ `redis`, "a user named alice with admin access" → policy rejects it with a clear
+message about IAM not being on the golden path. Get a key at platform.openai.com.
+
+**Option 3 — Ollama (fully local, free, no internet required)**
+```bash
+# One-time setup (outside Docker, on your Mac):
+brew install ollama
+ollama pull llama3.2        # ~2 GB download
+ollama serve                # keep this running in a separate terminal
+
+# In .env:
+OPENAI_API_KEY=ollama
+OPENAI_MODEL=llama3.2
+OLLAMA_HOST=http://host.docker.internal:11434/v1
+```
+Ollama runs on your Mac; Docker reaches it via `host.docker.internal`. Quality is
+lower than GPT-4o-mini for ambiguous requests but costs nothing and works offline.
+
+> **If you get a 500 error** after submitting a request, check
+> `docker compose logs orchestrator --tail=20`. A common cause is
+> `OPENAI_API_KEY=ollama` set without Ollama actually running — the LLM call
+> fails. Fix: either start Ollama (`ollama serve`) or clear the key to fall back
+> to heuristics. LLM failures no longer crash the service (they fall back to
+> heuristics automatically), but a missing/wrong key with no fallback path will.
+
+### 2d. Use the portal (recommended for demos)
 
 Open **http://localhost:3001** in a browser:
 
@@ -114,7 +161,7 @@ Open **http://localhost:3001** in a browser:
   status. Pending-approval runs show Approve / Reject buttons. Click Approve and
   the graph resumes; the status updates to `provisioned`.
 
-### 2c. Exercise the full agent flow via curl
+### 2e. Exercise the full agent flow via curl
 
 ```bash
 # Step 1 — submit an infra request (this starts the graph run)
@@ -167,7 +214,7 @@ curl -s -X POST localhost:8000/requests \
 # policy_agent rejects it; run ends without reaching human_approval
 ```
 
-### 2c. Run the test suite (no Docker needed)
+### 2f. Run the test suite (no Docker needed)
 
 ```bash
 make test
@@ -176,7 +223,7 @@ make test
 # 15 tests: supervisor routing, spec parsing, policy checks, full graph HITL flow.
 ```
 
-### 2d. Scaffold a new agent node (golden-path demo)
+### 2g. Scaffold a new agent node (golden-path demo)
 
 ```bash
 make new-agent NAME=cost_agent
@@ -184,7 +231,7 @@ make new-agent NAME=cost_agent
 # prints the 3 steps to wire it into the graph.
 ```
 
-### 2e. Stop the local stack
+### 2h. Stop the local stack
 
 ```bash
 make down
@@ -380,7 +427,48 @@ terraform destroy -var="environment=staging"
 
 ---
 
-## 5. Observability (both local and prod)
+## 5. Adding or changing golden-path resources
+
+All permitted resource types, environments, quotas, Terraform modules, and cost
+estimates are defined in one file:
+
+```
+orchestrator/app/golden_paths.py
+```
+
+**Current golden-path resources** (only these can be provisioned):
+
+| Resource type | Terraform module | Dev cost | Staging cost | Prod cost |
+|---|---|---|---|---|
+| `postgres` | `modules/rds-postgres` | $25/mo | $60/mo | $400/mo |
+| `redis` | `modules/elasticache-redis` | $15/mo | $40/mo | $250/mo |
+| `s3` | `modules/s3-bucket` | $1/mo | $2/mo | $10/mo |
+| `kafka-topic` | `modules/msk-topic` | $0 | $0 | $5/mo |
+
+Anything not in this list is rejected by `policy_agent` with
+`resource_type 'x' is not on the golden path`. The LLM understands the request
+correctly — the rejection is a business decision, not a parsing failure.
+
+**To add a new resource type** (e.g. `rds-mysql`):
+
+1. Add it to `ALLOWED_RESOURCE_TYPES` in `golden_paths.py`
+2. Add a quota entry under `QUOTAS["default"]`
+3. Add the Terraform module path to `TERRAFORM_MODULES`
+4. Add cost estimates to `ESTIMATED_MONTHLY_COST_USD`
+5. Add the actual Terraform module under `infra/modules/` (or point to an existing one)
+6. Run `make test` — existing tests will pass; add a test for the new type if needed
+7. `make down && make dev` to pick up the change
+
+**Limitations of heuristic mode** (no LLM configured):
+The heuristic parser in `spec_agent.py` only recognises resource types that appear
+as exact keywords in the request text. If you add `rds-mysql` to `golden_paths.py`,
+you must also add `"rds-mysql"` to `_KNOWN_NON_GOLDEN_PATH_RESOURCE_TYPES` in
+`spec_agent.py` so heuristics can reject it properly. With the LLM active this
+is not needed — the LLM extracts any resource type name from natural language.
+
+---
+
+## 6. Observability (both local and prod)
 
 ### Langfuse (optional tracing)
 
@@ -413,7 +501,7 @@ See `observability/slo.yaml` for the full contract. Key numbers to alert on:
 
 ---
 
-## 6. Quick-reference cheat sheet
+## 7. Quick-reference cheat sheet
 
 | Goal | Command |
 |---|---|

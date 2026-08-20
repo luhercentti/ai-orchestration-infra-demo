@@ -26,19 +26,22 @@ curl -X POST localhost:8000/requests \
   -d '{"raw_text": "I need a postgres database for team billing, staging", "requester": "alice"}'
 ```
 
-The graph immediately runs through five agents **automatically**, without any human
+The graph immediately runs through agents **automatically**, without any human
 involvement:
 
-1. `supervisor` → routes to `spec_agent`
-2. `spec_agent` → parses "postgres / billing / staging" from the free text, stores
+1. `guardrails` → checks for destructive intent and prompt injection in pure
+   Python — if triggered, the run ends immediately with `status: blocked` and
+   never reaches the LLM or any other agent
+2. `supervisor` → routes to `spec_agent`
+3. `spec_agent` → parses "postgres / billing / staging" from the free text, stores
    the structured spec in shared state
-3. `supervisor` → routes to `policy_agent`
-4. `policy_agent` → checks quota and golden-path rules → approved, no violations
-5. `supervisor` → routes to `plan_agent`
-6. `plan_agent` → selects `modules/rds-postgres`, estimates $60/mo, assigns a
+4. `supervisor` → routes to `policy_agent`
+5. `policy_agent` → checks quota and golden-path rules → approved, no violations
+6. `supervisor` → routes to `plan_agent`
+7. `plan_agent` → selects `modules/rds-postgres`, estimates $60/mo, assigns a
    deterministic `workspace_key` (`billing-staging-postgres`)
-7. `supervisor` → routes to `human_approval`
-8. `human_approval` → calls `interrupt()` — **graph freezes here**
+8. `supervisor` → routes to `human_approval`
+9. `human_approval` → calls `interrupt()` — **graph freezes here**
 
 The full state is persisted to Postgres at this point. The API call returns
 immediately with a `thread_id` and an `interrupts` payload. The developer's job
@@ -110,6 +113,9 @@ send to compliance, attach to a ticket, or use to debug a failed run.
 Developer                    Graph (automated)               Platform Engineer
     │                              │                                │
     ├── POST /requests ───────────►│                                │
+    │                   guardrails (destructive/injection check)    │
+    │                        ↓ blocked? → END immediately           │
+    │                        ↓ passed?                              │
     │                   supervisor → spec_agent                     │
     │                   supervisor → policy_agent                   │
     │                   supervisor → plan_agent                     │

@@ -22,6 +22,8 @@ optimization) are documented in [OTHER_EXAMPLES.md](OTHER_EXAMPLES.md) for later
 
 **Full end-to-end request flow (who does what, when, and how local differs from prod) is in [FLOW.md](FLOW.md).**
 
+**How to add new resource types and Terraform modules is in [ADDING_RESOURCES.md](ADDING_RESOURCES.md).**
+
 ## How the multi-agent orchestration actually works
 
 This is the core mechanic of the demo, explained step by step:
@@ -30,6 +32,7 @@ This is the core mechanic of the demo, explained step by step:
    defines a directed graph: each **node** is either an agent (an LLM call with a
    specific role/prompt) or a tool (a plain function). **Edges** define what can run
    next. There is no fixed script — the path through the graph is decided at runtime.
+   Every request enters through a **guardrails node** first.
 
 2. **Shared state, not message-passing.** Every node reads and writes to one shared
    **state object** (the request, conversation history, retrieved documents, tool
@@ -79,6 +82,11 @@ In short: the "AI orchestration" here is not one model deciding everything in a
 single prompt — it's a graph of narrow-purpose agents, a supervisor that routes
 between them based on shared state, and a persistence layer that makes the whole
 multi-step process durable, pausable, and safely resumable.
+
+**Security note:** every request passes through a `guardrails` node before any
+agent runs. It blocks destructive-intent requests ("destroy all infra", "terminate
+instances") and prompt-injection attempts ("ignore previous instructions") in pure
+Python — no LLM call, no way to bypass via crafted natural language.
 
 ## Repository layout
 
@@ -145,6 +153,10 @@ in the repo exists to deploy, test, or observe this folder.
 - `app/state.py` — the shared state schema (`OrchestratorState`) — every node
   reads from and writes to this single object; nothing is passed between agents
   directly
+- `app/agents/guardrails.py` — **first node every request hits** — blocks destructive
+  intent (delete/destroy/terminate/wipe/nuke etc.) and prompt-injection patterns
+  in pure Python before any LLM call is made; sets `status: blocked` and short-circuits
+  to END if triggered
 - `app/agents/supervisor.py` — the routing brain; reads the current state and
   decides which node runs next; the only place routing logic lives
 - `app/agents/spec_agent.py` — parses free-text into a structured spec; uses the

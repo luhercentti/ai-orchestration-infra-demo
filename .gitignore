@@ -1,5 +1,25 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
-.env
+*.pyo
 .pytest_cache/
+*.egg-info/
+
+# Node / portal
+portal/node_modules/
+portal/.next/
+portal/out/
+
+# Secrets
+.env
+
+# Terraform
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/infra-outputs.json
+
+# macOS
+.DS_Store

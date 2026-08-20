@@ -12,8 +12,13 @@ def policy_agent(state: OrchestratorState) -> dict:
     spec = state["spec"]
     violations = []
 
-    if spec["resource_type"] not in ALLOWED_RESOURCE_TYPES:
+    resource_on_golden_path = spec["resource_type"] in ALLOWED_RESOURCE_TYPES
+    if not resource_on_golden_path:
         violations.append(f"resource_type '{spec['resource_type']}' is not on the golden path")
+        # Skip env/quota checks — they don't apply to unsupported resource types
+        policy = {"approved": False, "violations": violations}
+        history = state.get("history", []) + [f"policy_agent: {policy}"]
+        return {"policy": policy, "history": history}
 
     if spec["environment"] not in ALLOWED_ENVIRONMENTS:
         violations.append(f"environment '{spec['environment']}' is not allowed")

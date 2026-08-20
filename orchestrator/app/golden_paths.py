@@ -4,12 +4,12 @@ In a real deployment this would live in a separate config repo or a service
 (the "platform catalog"), not hardcoded here — kept inline for the demo.
 """
 
-ALLOWED_RESOURCE_TYPES = {"postgres", "redis", "s3", "kafka-topic"}
+ALLOWED_RESOURCE_TYPES = {"postgres", "redis", "s3", "kafka-topic", "iam-user", "ec2"}
 ALLOWED_ENVIRONMENTS = {"dev", "staging", "prod"}
 
 # team -> max number of resources of a given type allowed per environment
 QUOTAS = {
-    "default": {"postgres": 3, "redis": 3, "s3": 10, "kafka-topic": 20},
+    "default": {"postgres": 3, "redis": 3, "s3": 10, "kafka-topic": 20, "iam-user": 5, "ec2": 5},
 }
 
 # module used to render the Terraform plan per resource type
@@ -18,6 +18,8 @@ TERRAFORM_MODULES = {
     "redis": "modules/elasticache-redis",
     "s3": "modules/s3-bucket",
     "kafka-topic": "modules/msk-topic",
+    "iam-user": "modules/iam-user",
+    "ec2": "modules/ec2-instance",
 }
 
 ESTIMATED_MONTHLY_COST_USD = {
@@ -25,4 +27,6 @@ ESTIMATED_MONTHLY_COST_USD = {
     "redis": {"dev": 15, "staging": 40, "prod": 250},
     "s3": {"dev": 1, "staging": 2, "prod": 10},
     "kafka-topic": {"dev": 0, "staging": 0, "prod": 5},
+    "iam-user": {"dev": 0, "staging": 0, "prod": 0},
+    "ec2": {"dev": 10, "staging": 30, "prod": 200},
 }

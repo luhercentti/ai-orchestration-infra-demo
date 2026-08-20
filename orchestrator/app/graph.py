@@ -1,6 +1,7 @@
 """Builds the LangGraph StateGraph: nodes, edges, conditional routing."""
 from langgraph.graph import END, StateGraph
 
+from .agents.guardrails import guardrails
 from .agents.human_approval import human_approval
 from .agents.plan_agent import plan_agent
 from .agents.policy_agent import policy_agent
@@ -10,9 +11,15 @@ from .agents.supervisor import route, supervisor
 from .state import OrchestratorState
 
 
+def _guardrails_route(state: OrchestratorState) -> str:
+    """Short-circuit to END immediately if guardrails blocked the request."""
+    return "end" if state.get("status") == "blocked" else "supervisor"
+
+
 def build_graph(checkpointer=None):
     graph = StateGraph(OrchestratorState)
 
+    graph.add_node("guardrails", guardrails)
     graph.add_node("supervisor", supervisor)
     graph.add_node("spec_agent", spec_agent)
     graph.add_node("policy_agent", policy_agent)
@@ -20,9 +27,10 @@ def build_graph(checkpointer=None):
     graph.add_node("human_approval", human_approval)
     graph.add_node("provisioning_agent", provisioning_agent)
 
-    graph.set_entry_point("supervisor")
+    # guardrails is the first node every request hits
+    graph.set_entry_point("guardrails")
+    graph.add_conditional_edges("guardrails", _guardrails_route, {"end": END, "supervisor": "supervisor"})
 
-    # Every specialist reports back to the supervisor, which re-routes.
     for node in ("spec_agent", "policy_agent", "plan_agent", "human_approval", "provisioning_agent"):
         graph.add_edge(node, "supervisor")
 

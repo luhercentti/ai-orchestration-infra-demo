@@ -13,7 +13,9 @@ def test_routes_to_policy_agent_when_spec_present():
 
 def test_ends_when_policy_rejected():
     state = {"spec": {}, "policy": {"approved": False, "violations": ["quota exceeded"]}, "history": []}
-    assert supervisor(state)["next"] == "end"
+    result = supervisor(state)
+    assert result["next"] == "end"
+    assert result["status"] == "policy_rejected"
 
 
 def test_routes_to_plan_agent_when_policy_approved():
@@ -40,6 +42,19 @@ def test_routes_to_provisioning_when_approved():
         "history": [],
     }
     assert supervisor(state)["next"] == "provisioning_agent"
+
+
+def test_sets_rejected_status_when_approval_is_rejected():
+    state = {
+        "spec": {},
+        "policy": {"approved": True, "violations": []},
+        "plan": {"module": "modules/rds-postgres"},
+        "approval": "rejected",
+        "history": [],
+    }
+    result = supervisor(state)
+    assert result["next"] == "end"
+    assert result["status"] == "rejected"
 
 
 def test_ends_after_provisioned():

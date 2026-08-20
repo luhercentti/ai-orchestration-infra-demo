@@ -35,5 +35,6 @@ class OrchestratorState(TypedDict, total=False):
     approval: Optional[Literal["approved", "rejected"]]
     approver: Optional[str]
     status: str
+    block_reason: Optional[str]  # set by guardrails node; non-None means the run was blocked
     next: str
     history: List[str]
